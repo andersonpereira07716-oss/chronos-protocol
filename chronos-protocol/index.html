@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chronos Protocol - Mobile RPG</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            height: 100vh;
+            background-color: #0d0d0d;
+            color: #fff;
+            font-family: sans-serif;
+            overflow: hidden;
+            padding: 10px;
+        }
+
+        h1 {
+            font-size: 1.1rem;
+            margin: 5px 0;
+            color: #00ffcc;
+            letter-spacing: 1px;
+            text-align: center;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-grow: 1;
+            position: relative;
+        }
+
+        canvas {
+            border: 3px solid #00ffcc;
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 255, 204, 0.3);
+            max-width: 100%;
+            height: auto;
+        }
+
+        #battleScreen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 360px;
+            height: 360px;
+            background-color: #111;
+            border: 3px solid #ff3366;
+            border-radius: 8px;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(255, 51, 102, 0.4);
+        }
+
+        .battle-info {
+            text-align: center;
+        }
+
+        .battle-info h2 {
+            color: #ff3366;
+            margin: 0 0 10px 0;
+            font-size: 1.3rem;
+        }
+
+        .stats-box {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            background: #222;
+            padding: 8px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        .battle-log {
+            background: #000;
+            border: 1px solid #444;
+            padding: 10px;
+            height: 80px;
+            font-size: 0.85rem;
+            overflow-y: auto;
+            color: #00ffcc;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+
+        .battle-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 70px);
+            grid-template-rows: repeat(2, 70px);
+            gap: 10px;
+            margin-bottom: 10px;
+            justify-content: center;
+        }
+
+        .btn {
+            background-color: #222;
+            border: 2px solid #00ffcc;
+            color: #00ffcc;
+            font-size: 1.5rem;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .btn:active, .battle-btn:active {
+            background-color: #00ffcc;
+            color: #000;
+        }
+
+        .battle-btn {
+            background-color: #222;
+            border: 2px solid #ff3366;
+            color: #ff3366;
+            padding: 10px;
+            font-size: 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-up { grid-column: 2; grid-row: 1; }
+        .btn-left { grid-column: 1; grid-row: 2; }
+        .btn-down { grid-column: 2; grid-row: 2; }
+        .btn-right { grid-column: 3; grid-row: 2; }
+    </style>
+</head>
+<body>
+
+    <h1 id="gameTitle">Chronos Protocol - Exploração</h1>
+
+    <div class="game-container">
+        <canvas id="gameCanvas" width="360" height="360"></canvas>
+
+        <div id="battleScreen">
+            <div class="battle-info">
+                <h2>⚠️ ENCONTRO HOSTIL!</h2>
+                <div class="stats-box">
+                    <div>Herói HP: <span id="playerHp">100</span></div>
+                    <div>Inimigo HP: <span id="enemyHp">50</span></div>
+                </div>
+                <div class="battle-log" id="battleLog">Um vírus selvagem apareceu na rede! O que deseja fazer?</div>
+            </div>
+            <div class="battle-actions">
+                <button class="battle-btn" onclick="playerAttack()">ATACAR</button>
+                <button class="battle-btn" onclick="tryFlee()">FUGIR</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls" id="moveControls">
+        <button class="btn btn-up" id="upBtn">▲</button>
+        <button class="btn btn-left" id="leftBtn">◀</button>
+        <button class="btn btn-down" id="downBtn">▼</button>
+        <button class="btn btn-right" id="rightBtn">▶</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const tileSize = 40;
+
+        const player = {
+            gridX: 4,
+            gridY: 4,
+            color: '#00ffcc',
+            width: tileSize - 4,
+            height: tileSize - 4,
+            hp: 100,
+            maxHp: 100,
+            atk: 15
+        };
+
+        const enemy = {
+            name: "Bug_Corrupto.exe",
+            hp: 50,
+            maxHp: 50,
+            atk: 10
+        };
+
+        let inBattle = false;
+
+        const mapLayout = [
+            [1,1,1,1,1,1,1,1,1],
+            [1,0,0,2,2,2,0,0,1],
+            [1,0,1,1,2,1,1,0,1],
+            [1,2,2,0,0,0,2,2,1],
+            [1,2,0,0,0,0,0,2,1],
+            [1,2,2,0,0,0,2,2,1],
+            [1,0,1,1,2,1,1,0,1],
+            [1,0,0,2,2,2,0,0,1],
+            [1,1,1,1,1,1,1,1,1]
+        ];
+
+        const mapRows = mapLayout.length;
+        const mapCols = mapLayout[0].length;
+
+        function drawWall(x, y) {
+            ctx.fillStyle = '#ff3366';
+            ctx.fillRect(x * tileSize + 2, y * tileSize + 2, tileSize - 4, tileSize - 4);
+        }
+
+        function drawFloor(x, y) {
+            ctx.fillStyle = '#222';
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+        }
+
+        function drawGrass(x, y) {
+            ctx.fillStyle = '#0a5c36';
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = player.color;
+            ctx.fillRect(
+                player.gridX * tileSize + 2, 
+                player.gridY * tileSize + 2, 
+                player.width, 
+                player.height
+            );
+        }
+
+        function update() {
+            if (inBattle) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let row = 0; row < mapRows; row++) {
+                for (let col = 0; col < mapCols; col++) {
+                    if (mapLayout[row][col] === 1) {
+                        drawWall(col, row);
+                    } else if (mapLayout[row][col] === 2) {
+                        drawGrass(col, row);
+                    } else {
+                        drawFloor(col, row);
+                    }
+                }
+            }
+            drawPlayer();
+        }
+
+        function movePlayer(dx, dy) {
+            if (inBattle) return;
+
+            let nextX = player.gridX + dx;
+            let nextY = player.gridY + dy;
+
+            const dentroDosLimites = (nextX >= 0 && nextX < mapCols && nextY >= 0 && nextY < mapRows);
+            
+            if (dentroDosLimites && mapLayout[nextY][nextX] !== 1) {
+                player.gridX = nextX;
+                player.gridY = nextY;
+
+                if (mapLayout[nextY][nextX] === 2 && Math.random() < 0.35) {
+                    startBattle();
+                }
+            }
+            update();
+        }
+
+        function startBattle() {
+            inBattle = true;
+            enemy.hp = enemy.maxHp;
+            document.getElementById('enemyHp').innerText = enemy.hp;
+            document.getElementById('playerHp').innerText = player.hp;
+            document.getElementById('battleLog').innerText = "Um " + enemy.name + " selvagem bloqueou seu caminho!";
+            document.getElementById('battleScreen').style.display = 'flex';
+            document.getElementById('moveControls').style.display = 'none';
+            document.getElementById('gameTitle').innerText = "Combate Cibernético";
+        }
+
+        function endBattle(victory) {
+            inBattle = false;
+            document.getElementById('battleScreen').style.display = 'none';
+            document.getElementById('moveControls').style.display = 'grid';
+            document.getElementById('gameTitle').innerText = "Chronos Protocol - Exploração";
+            
+            if (!victory && player.hp <= 0) {
+                alert("Seu sistema sofreu crash total! Reiniciando HP...");
+                player.hp = player.maxHp;
+            }
+            update();
+        }
+
+        function playerAttack() {
+            enemy.hp -= player.atk;
+            if (enemy.hp < 0) enemy.hp = 0;
+            document.getElementById('enemyHp').innerText = enemy.hp;
+            
+            let log = `Você atacou e causou ${player.atk} de dano!`;
+
+            if (enemy.hp <= 0) {
+                log += "\nInimigo deletado com sucesso! Vitória!";
+                document.getElementById('battleLog').innerText = log;
+                setTimeout(() => endBattle(true), 1500);
+                return;
+            }
+
+            setTimeout(() => {
+                player.hp -= enemy.atk;
+                if (player.hp < 0) player.hp = 0;
+                document.getElementById('playerHp').innerText = player.hp;
+                
+                let enemyLog = log + `\nO inimigo retrucou e causou ${enemy.atk} de dano!`;
+                if (player.hp <= 0) {
+                    enemyLog += "\nSeu núcleo foi destruído...";
+                    document.getElementById('battleLog').innerText = enemyLog;
+                    setTimeout(() => endBattle(false), 1500);
+                } else {
+                    document.getElementById('battleLog').innerText = enemyLog + "\nSua vez!";
+                }
+            }, 800);
+        }
+
+        function tryFlee() {
+            if (Math.random() < 0.6) {
+                document.getElementById('battleLog').innerText = "Fuga bem-sucedida para o setor seguro!";
+                setTimeout(() => endBattle(true), 1200);
+            } else {
+                document.getElementById('battleLog').innerText = "Tentativa de fuga falhou! O inimigo aproveitou a brecha.";
+                setTimeout(() => {
+                    player.hp -= enemy.atk;
+                    if (player.hp < 0) player.hp = 0;
+                    document.getElementById('playerHp').innerText = player.hp;
+                    if (player.hp <= 0) {
+                        setTimeout(() => endBattle(false), 1500);
+                    }
+                }, 800);
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') movePlayer(0, -1);
+            if (e.key === 'ArrowDown') movePlayer(0, 1);
+            if (e.key === 'ArrowLeft') movePlayer(-1, 0);
+            if (e.key === 'ArrowRight') movePlayer(1, 0);
+        });
+
+        document.getElementById('upBtn').addEventListener('click', () => movePlayer(0, -1));
+        document.getElementById('downBtn').addEventListener('click', () => movePlayer(0, 1));
+        document.getElementById('leftBtn').addEventListener('click', () => movePlayer(-1, 0));
+        document.getElementById('rightBtn').addEventListener('click', () => movePlayer(1, 0));
+
+        update();
+    </script>
+</body>
+</html>

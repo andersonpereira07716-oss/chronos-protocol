@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Chronos Protocol - Advanced</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { background-color: #0b0f19; color: #fff; font-family: monospace; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; padding: 2px; overflow: hidden; }
+        .hud { width: 100%; max-width: 320px; background: rgba(17, 24, 39, 0.95); border: 1px solid #06b6d4; border-radius: 6px; padding: 4px; display: flex; flex-direction: column; gap: 2px; box-shadow: 0 0 10px rgba(6, 182, 212, 0.3); }
+        .title { text-align: center; color: #22d3ee; font-weight: bold; font-size: 11px; letter-spacing: 2px; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; font-size: 9px; text-align: center; font-weight: bold; }
+        .stat-box { background: #1f2937; padding: 2px; border-radius: 3px; border: 1px solid rgba(6, 182, 212, 0.2); }
+        .actions { display: flex; gap: 2px; }
+        .actions button { background: #083344; color: #67e8f9; border: 1px solid #0891b2; border-radius: 3px; padding: 3px; font-size: 9px; font-weight: bold; cursor: pointer; flex: 1; }
+        .actions button:active { transform: scale(0.95); background: #0e7490; }
+        .btn-reset { background: #450a0a !important; color: #fca5a5 !important; border-color: #dc2626 !important; flex: 0.4 !important; }
+        canvas { border: 2px solid #06b6d4; border-radius: 6px; box-shadow: 0 0 10px rgba(6, 182, 212, 0.4); background: #111827; width: 220px; height: 220px; }
+        .controls { width: 100%; max-width: 320px; display: flex; flex-direction: column; align-items: center; gap: 2px; margin-bottom: 4px; }
+        .controls-row { display: flex; gap: 6px; }
+        .btn-ctrl { width: 54px; height: 34px; font-size: 16px; background: #1f2937; color: #22d3ee; border: 1px solid #0891b2; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .btn-ctrl:active { background: #083344; transform: scale(0.95); }
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+        .modal-body { background: #111827; border: 1px solid #06b6d4; border-radius: 10px; padding: 12px; width: 100%; max-width: 280px; display: flex; flex-direction: column; gap: 8px; font-size: 11px; }
+        .modal-body button { background: #083344; color: #67e8f9; border: 1px solid #0891b2; border-radius: 4px; padding: 5px; font-weight: bold; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="hud">
+        <div class="title">CHRONOS PROTOCOL v3</div>
+        <div class="stats">
+            <div class="stat-box">Fase: <span id="hud-fase" style="color:#67e8f9">1</span></div>
+            <div class="stat-box">Chips: <span id="hud-chips" style="color:#facc15">0/4</span></div>
+            <div class="stat-box">ATK: <span id="hud-atk" style="color:#f87171">15</span></div>
+            <div class="stat-box">Escudo: <span id="hud-escudo" style="color:#60a5fa">0</span></div>
+        </div>
+        <div class="actions">
+            <button onclick="openModal('loja')">🛒 Loja</button>
+            <button onclick="triggerRewind()" style="background:#3b0764; color:#d8b4fe; border-color:#a855f7;">⏳ Rewind</button>
+            <button onclick="triggerOverclock()" id="btn-overclock">⚡ Overclock</button>
+            <button onclick="resetGame()" class="btn-reset">Reset</button>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" width="320" height="320"></canvas>
+
+    <div class="controls">
+        <button id="btn-up" class="btn-ctrl">▲</button>
+        <div class="controls-row">
+            <button id="btn-left" class="btn-ctrl">◀</button>
+            <button id="btn-down" class="btn-ctrl">▼</button>
+            <button id="btn-right" class="btn-ctrl">▶</button>
+        </div>
+    </div>
+
+    <div id="gameModal" class="modal">
+        <div class="modal-body">
+            <div id="modal-title" style="color:#22d3ee; font-weight:bold; text-align:center;"></div>
+            <div id="modal-content"></div>
+            <button onclick="closeModal()">Fechar</button>
+        </div>
+    </div>
+
+    <script>
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSound(freq, type, duration) {
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + duration);
+            } catch(e){}
+        }
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const tileSize = 32;
+        let player = { x: 1, y: 1 };
+        let chipsCount = 0, chipsTarget = 4, atk = 15, escudo = 0, fase = 1;
+        let overclockActive = false, historyPositions = [], chips = [], enemies = [];
+
+        const maps = [
+            [
+                [1,1,1,1,1,1,1,1,1,1],
+                [1,0,0,0,0,0,0,0,0,1],
+                [1,0,1,1,0,0,1,1,0,1],
+                [1,0,0,0,0,0,0,0,0,1],
+                [1,0,0,2,2,2,2,0,0,1],
+                [1,0,0,2,2,2,2,0,0,1],
+                [1,0,0,0,0,0,0,0,0,1],
+                [1,0,1,1,0,0,1,1,0,1],
+                [1,0,0,0,0,0,0,0,0,1],
+                [1,1,1,1,1,1,1,1,1,1]
+            ]
+        ];
+
+        let currentMap = maps[0];
+
+        function loadLevel() {
+            currentMap = maps[0];
+            player = { x: 1, y: 1 };
+            chipsCount = 0;
+            chipsTarget = 3 + fase;
+            chips = [];
+            for (let i = 0; i < chipsTarget; i++) {
+                let rx, ry;
+                do {
+                    rx = Math.floor(Math.random() * 8) + 1;
+                    ry = Math.floor(Math.random() * 8) + 1;
+                } while (currentMap[ry][rx] !== 0 || (rx === 1 && ry === 1));
+                chips.push({ x: rx, y: ry });
+            }
+            enemies = [];
+            let count = Math.min(fase, 3);
+            for (let i = 0; i < count; i++) {
+                enemies.push({ x: 8 - i, y: 8, dir: -1, type: i === 2 ? 'glitch' : 'normal' });
+            }
+            document.getElementById('hud-fase').innerText = fase;
+            document.getElementById('hud-chips').innerText = `${chipsCount}/${chipsTarget}`;
+        }
+
+        function movePlayer(dx, dy) {
+            let nx = player.x + dx, ny = player.y + dy;
+            if (nx >= 0 && nx < 10 && ny >= 0 && ny < 10 && currentMap[ny][nx] !== 1 && currentMap[ny][nx] !== 2) {
+                historyPositions.push({ x: player.x, y: player.y });
+                if (historyPositions.length > 10) historyPositions.shift();
+
+                player.x = nx; player.y = ny;
+                playSound(400, 'square', 0.08);
+                stepSimulation();
+            } else { playSound(150, 'sawtooth', 0.1); }
+        }
+
+        function stepSimulation() {
+            enemies.forEach(e => {
+                if (e.type === 'glitch' && Math.random() < 0.4) {
+                    e.x = Math.floor(Math.random() * 8) + 1;
+                    e.y = Math.floor(Math.random() * 8) + 1;
+                } else {
+                    let nextX = e.x + e.dir;
+                    if (nextX > 0 && nextX < 9 && currentMap[e.y][nextX] === 0) { e.x = nextX; }
+                    else { e.dir *= -1; }
+                }
+            });
+
+            chips = chips.filter(c => {
+                if (c.x === player.x && c.y === player.y) {
+                    chipsCount++;
+                    playSound(880, 'sine', 0.15);
+                    document.getElementById('hud-chips').innerText = `${chipsCount}/${chipsTarget}`;
+                    if (chipsCount >= chipsTarget) {
+                        setTimeout(() => {
+                            alert(`Fase ${fase} Concluída!`);
+                            fase++; loadLevel();
+                        }, 50);
+                    }
+                    return false;
+                }
+                return true;
+            });
+
+            enemies.forEach(e => {
+                if (e.x === player.x && e.y === player.y) {
+                    if (escudo > 0) {
+                        escudo--;
+                        document.getElementById('hud-escudo').innerText = escudo;
+                        player.x = 1; player.y = 1;
+                        alert('Escudo absorveu o impacto!');
+                    } else {
+                        playSound(100, 'sawtooth', 0.3);
+                        alert('Apanhado pela Sentinela! Nível reiniciado.');
+                        resetGame();
+                    }
+                }
+            });
+        }
+
+        document.getElementById('btn-up').onclick = () => movePlayer(0, -1);
+        document.getElementById('btn-down').onclick = () => movePlayer(0, 1);
+        document.getElementById('btn-left').onclick = () => movePlayer(-1, 0);
+        document.getElementById('btn-right').onclick = () => movePlayer(1, 0);
+
+        function triggerOverclock() {
+            if (overclockActive) return;
+            overclockActive = true;
+            playSound(600, 'triangle', 0.3);
+            let orig = atk; atk *= 2;
+            document.getElementById('hud-atk').innerText = atk;
+            setTimeout(() => {
+                atk = orig;
+                document.getElementById('hud-atk').innerText = atk;
+                overclockActive = false;
+            }, 4000);
+        }
+
+        function triggerRewind() {
+            if (historyPositions.length > 0) {
+                let lastPos = historyPositions.pop();
+                player.x = lastPos.x;
+                player.y = lastPos.y;
+                playSound(700, 'sine', 0.2);
+            } else {
+                alert('Sem histórico recente para rebobinar!');
+            }
+        }
+
+        function openModal(type) {
+            playSound(500, 'sine', 0.1);
+            const modal = document.getElementById('gameModal');
+            modal.style.display = 'flex';
+            if (type === 'loja') {
+                document.getElementById('modal-title').innerText = 'Loja Cibernética';
+                document.getElementById('modal-content').innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <span>+5 ATK (2 Chips)</span>
+                        <button onclick="buyUpgrade('atk')">Comprar</button>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>+1 Escudo (2 Chips)</span>
+                        <button onclick="buyUpgrade('escudo')">Comprar</button>
+                    </div>`;
+            } else {
+                document.getElementById('modal-title').innerText = 'Missões';
+                document.getElementById('modal-content').innerHTML = '<p>Usa o Rewind para escapar de armadilhas e recolhe os chips evitando as sentinelas roxas e vermelhas!</p>';
+            }
+        }
+
+        function closeModal() { document.getElementById('gameModal').style.display = 'none'; }
+
+        function buyUpgrade(item) {
+            if (item === 'atk' && chipsCount >= 2) {
+                chipsCount -= 2; atk += 5;
+                document.getElementById('hud-chips').innerText = `${chipsCount}/${chipsTarget}`;
+                document.getElementById('hud-atk').innerText = atk;
+            } else if (item === 'escudo' && chipsCount >= 2) {
+                chipsCount -= 2; escudo += 1;
+                document.getElementById('hud-chips').innerText = `${chipsCount}/${chipsTarget}`;
+                document.getElementById('hud-escudo').innerText = escudo;
+            } else { alert('Chips insuficientes!'); }
+        }
+
+        function resetGame() {
+            fase = 1; atk = 15; escudo = 0;
+            document.getElementById('hud-fase').innerText = fase;
+            document.getElementById('hud-atk').innerText = atk;
+            document.getElementById('hud-escudo').innerText = escudo;
+            loadLevel();
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 10; c++) {
+                    ctx.fillStyle = currentMap[r][c] === 1 ? '#f43f5e' : (currentMap[r][c] === 2 ? '#065f46' : '#1f2937');
+                    ctx.fillRect(c * tileSize, r * tileSize, tileSize - 1, tileSize - 1);
+                }
+            }
+            chips.forEach(c => { ctx.fillStyle = '#facc15'; ctx.fillRect(c.x * tileSize + 8, c.y * tileSize + 8, 16, 16); });
+            enemies.forEach(e => {
+                ctx.fillStyle = e.type === 'glitch' ? '#c084fc' : '#ef4444';
+                ctx.fillRect(e.x * tileSize + 6, e.y * tileSize + 6, 20, 20);
+            });
+            ctx.fillStyle = overclockActive ? '#facc15' : '#06b6d4';
+            ctx.fillRect(player.x * tileSize + 4, player.y * tileSize + 4, 24, 24);
+            requestAnimationFrame(gameLoop);
+        }
+
+        loadLevel();
+        gameLoop();
+    </script>
+</body>
+</html>
